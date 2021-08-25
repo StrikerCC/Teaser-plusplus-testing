@@ -1,0 +1,1 @@
+/usr/bin/c++  -g   CMakeFiles/teaser_cpp_ply.dir/teaser_cpp_ply.cc.o  -o teaser_cpp_ply  -lteaserpp::teaser_registration -lteaserpp::teaser_io 

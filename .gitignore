@@ -31,3 +31,7 @@ TAGS
 *.m~
 python/*.egg-info/
 /doc/_build/
+*.pcd
+*.ply
+data/
+result/
