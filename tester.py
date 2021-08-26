@@ -11,7 +11,7 @@ import json
 import os
 import numpy as np
 
-from dataset import reader
+from dataset import Reader
 from registration import registrations, VOXEL_SIZE_GLOBAL
 from vis import draw_registration_result
 
@@ -27,7 +27,8 @@ statistics_testing = {global_registration: {'method': global_registration.__name
                                             'pose_failure': [],
                                             'error_t_failure': [],
                                             'error_o_failure': [],
-                                            'voxel_size_reg_failure': []
+                                            'voxel_size_reg_failure': [],
+                                            'correspondence_failure': []
                                             } for global_registration in registrations}
 
 
@@ -151,12 +152,12 @@ def main():
 
     sample_path = './data/TUW_TUW_models/TUW_models/'
     # input_path = './data/TUW_TUW_data/'
-    input_path = './data/TUW_TUW_data_s/'
+    input_path = 'data/TUW_TUW_data_uniform_size/'
     input_json_path = input_path + 'data.json'
 
     result_path = './result/TUW_TUW_test/'
 
-    dl = reader()
+    dl = Reader()
     dl.read(input_json_path)
 
     reg_tester = tester()

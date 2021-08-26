@@ -16,7 +16,7 @@ import teaserpp_python
 import numpy as np 
 import copy
 from helpers import *
-from dataset import reader
+from dataset import Reader
 from vis import draw_registration_result
 VOXEL_SIZE = 5
 VOXEL_SIZE_FINE = 3
@@ -39,7 +39,7 @@ def main():
 
     output_path = './data/TUW_TUW_data/'
     output_json_path = output_path + 'data.json'
-    dl = reader()
+    dl = Reader()
     dl.read(output_json_path)
     for i in range(len(dl)):
         source = dl[i]

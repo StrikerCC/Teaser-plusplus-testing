@@ -19,38 +19,38 @@ import transforms3d as t3d
 from vis import draw_registration_result
 
 
-class dataset:
+class Dataset:
     def __init__(self):
         self.meter_2_mm = True
         self.flag_show = False
 
-        # self.size = 220
-        # self.voxel_sizes = (0.7,)
-        # self.angles_cutoff_along = (0.0,)
-        # self.plane_sizes = (0.8,)
-        # self.Gaussian_sigma_factor = (0.2, 0.6, 1.2)
-        # self.n_move = 2
-        # self.translation_rg_factor = (-2.1, 2.1)
-        # self.rotation_reg = (-0.1, 0.0)
-        # self.num_random = (100,)
-
         self.size = 220
-        self.voxel_sizes = (0.07, 0.67)
-        self.voxel_sizes = np.arange(self.voxel_sizes[0], self.voxel_sizes[1], (self.voxel_sizes[1]-self.voxel_sizes[0])/4)
+        self.voxel_sizes = (0.7,)
+        self.angles_cutoff_along = (0.0,)
+        self.plane_sizes = (0.8,)
+        self.Gaussian_sigma_factor = (0.2, 0.6, 1.2)
+        self.n_move = 2
+        self.translation_rg_factor = (-2.1, 2.1)
+        self.rotation_reg = (-0.1, 0.0)
+        self.num_random = (100,)
 
-        self.angles_cutoff_along = (0.0, 360.0)
-        self.angles_cutoff_along = np.arange(self.angles_cutoff_along[0], self.angles_cutoff_along[1], 90.0)
-        self.angle_cutoff = 90
-
-        self.plane_sizes = (0.8, 1.7)
-        self.plane_sizes = np.arange(self.plane_sizes[0], self.plane_sizes[1], 0.8)
-
-        self.Gaussian_sigma_factor = (0.2, 1.5)
-        self.Gaussian_sigma_factor = np.arange(self.Gaussian_sigma_factor[0], self.Gaussian_sigma_factor[1], 0.4)
-
-        self.n_move = 6
-        self.translation_rg_factor = (-2.5, 2.5)
-        self.rotation_reg = (-360.0, 360.0)
+        # self.size = 220
+        # self.voxel_sizes = (0.07, 0.67)
+        # self.voxel_sizes = np.arange(self.voxel_sizes[0], self.voxel_sizes[1], (self.voxel_sizes[1]-self.voxel_sizes[0])/4)
+        #
+        # self.angles_cutoff_along = (0.0, 360.0)
+        # self.angles_cutoff_along = np.arange(self.angles_cutoff_along[0], self.angles_cutoff_along[1], 90.0)
+        # self.angle_cutoff = 90
+        #
+        # self.plane_sizes = (0.8, 1.7)
+        # self.plane_sizes = np.arange(self.plane_sizes[0], self.plane_sizes[1], 0.8)
+        #
+        # self.Gaussian_sigma_factor = (0.2, 1.5)
+        # self.Gaussian_sigma_factor = np.arange(self.Gaussian_sigma_factor[0], self.Gaussian_sigma_factor[1], 0.4)
+        #
+        # self.n_move = 6
+        # self.translation_rg_factor = (-2.5, 2.5)
+        # self.rotation_reg = (-360.0, 360.0)
 
 
         # self.num_random = np.arange(50, 250, 100)
@@ -90,13 +90,26 @@ class dataset:
     #     self.file_paths = [dir_path + instance + '/3D_model.pcd' for instance in instances]
 
 
-class writer(dataset):
+class ExeThread(threading.Thread):
+    def __init__(self, thread_id, func, args):
+        threading.Thread.__init__(self)
+        self.thread_id = thread_id
+        self.func = func
+        self.args = args
+
+    def run(self):
+        print(self.thread_id, '::Creating artificial point cloud done')
+        self.func(*self.args)
+        print(self.thread_id, '::Creating artificial point cloud done')
+
+
+class Writer(Dataset):
     def __init__(self):
-        dataset.__init__(self)
+        Dataset.__init__(self)
         self.filename_len = 6
         self.meter_2_mm = True
 
-    def write(self, sample_dir_path, output_dir_path, json_path):
+    def write(self, sample_dir_path, output_dir_path, json_path, num_thread=4):
         # setup output path and file
         if not os.path.isdir(output_dir_path):
             os.makedirs(output_dir_path)
@@ -129,28 +142,44 @@ class writer(dataset):
         print('Set up artificial point cloud for')
 
         # assign slice of sources execution for multithreading
+        index_sources_thread_list = [int(id_thread * len(sources) / num_thread) for id_thread in range(num_thread)]
 
         # create artificial pc and save it
-        print('Creating artificial point cloud')
-        self.__exe_all(sources, output_dir_path)
-        print('Created artificial point cloud for\n')
+        # # create multithreading for pc maker and saver
+        exe_thread_list = []
+        for id_thread in range(num_thread):
+            index_start_sources = index_sources_thread_list[id_thread]
+            index_end_sources = index_sources_thread_list[id_thread+1] if id_thread < num_thread-1 else len(sources)
+            exe_thread_list.append(ExeThread(thread_id=0, func=self.__exe_all, args=(sources, output_dir_path,
+                                                                                     index_start_sources,
+                                                                                     index_end_sources)))
+
+        # # start multithreading for pc maker and saver
+        for id_thread in range(num_thread):
+            exe_thread_list[id_thread].start()
+
+        # # make sure main thread wait for multithreading for pc maker and saver
+        for id_thread in range(num_thread):
+            exe_thread_list[id_thread].join()
 
         # make json file to retrieve data
         sources_record = sources  # self.__format_json(sources)
         with open(json_path, 'w') as f:
             json.dump(sources_record, f)
 
-    def __exe_all(self, sources, output_dir_path):
+    def __exe_all(self, sources, output_dir_path, index_start_sources=0, index_end_sources=-1):
         # create artificial pc and save it
         instance_cur = None
-        for i, source in enumerate(sources):
+        for index_source, source in enumerate(sources[index_start_sources:index_end_sources]):
+            id_pc_saving = index_start_sources + index_source
+            
             # read pc, down sampling, and so on
             self.__load_pc(source, flag_show=self.flag_show)
 
             # output to screen
             if not instance_cur or not instance_cur == source['instance']:  # notice if instance change
                 instance_cur = source['instance']
-                print('     ', i, 'iter: Working on', source['instance'], source['pc_artificial'], ' range from',
+                print('     ', id_pc_saving, 'iter: Working on', source['instance'], source['pc_artificial'], ' range from',
                       source['pc_artificial'].get_min_bound(), 'to', source['pc_artificial'].get_max_bound())
 
             self.__exe_down_sampling(source, flag_show=self.flag_show)
@@ -159,7 +188,7 @@ class writer(dataset):
             self.__exe_add_plane(source, flag_show=self.flag_show)
             self.__exe_add_noise(source, flag_show=self.flag_show)
             self.__exe_add_pose(source, flag_show=self.flag_show)
-            self.__save_pc(output_dir_path, index=i, source=source)
+            self.__save_pc(output_dir_path, index=id_pc_saving, source=source)
 
     def __reg_pc(self, file_paths, instances):
         sources = []
@@ -385,21 +414,10 @@ class writer(dataset):
         if flag_show:
             o3.visualization.draw_geometries([pc], window_name='Initial Setup add ' + str(noise_sigma) + ' sigma')
 
-    class __ExeThread(threading.Thread):
-        def __init__(self, thread_id, func, args):
-            threading.Thread.__init__(self)
-            self.thread_id = thread_id
-            self.func = func
-            self.args = args
 
-        def run(self):
-            self.func(self.args)
-            print(self.thread_id, '::Creating artificial point cloud done')
-
-
-class reader(dataset):
+class Reader(Dataset):
     def __init__(self):
-        dataset.__init__(self)
+        Dataset.__init__(self)
         self.meter_2_mm = False
         self.sources = None
 
@@ -439,14 +457,15 @@ def main():
 
     sample_path = './data/TUW_TUW_models/TUW_models/'
     # output_path = './data/TUW_TUW_data/'
-    output_path = './data/TUW_TUW_data_s/'
+    # output_path = 'data/TUW_TUW_data_uniform_size/'
+    output_path = 'data/TUW_TUW_data_small/'
     output_json_path = output_path + 'data.json'
-    ds = writer()
+    ds = Writer()
     # ds.read_instance(data_path)
     if write:
         ds.write(sample_path, output_path, output_json_path)
 
-    dl = reader()
+    dl = Reader()
     dl.read(output_json_path)
 
     i = -1

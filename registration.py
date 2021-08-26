@@ -12,7 +12,7 @@ import transforms3d as t3d
 import open3d as o3
 
 from helpers import find_correspondences, get_teaser_solver, Rt2T
-from dataset import dataset
+from dataset import Dataset
 from vis import draw_registration_result
 
 
