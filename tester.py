@@ -12,7 +12,7 @@ import os
 import numpy as np
 
 from dataset import Reader
-from registration import registrations, VOXEL_SIZE_GLOBAL
+from registration import registrations, VOXEL_SIZE_GLOBAL, VOXEL_SIZE_LOCAL
 from vis import draw_registration_result
 
 statistics_testing = {global_registration: {'method': global_registration.__name__,
@@ -38,15 +38,16 @@ class tester:
         self.dataloader = None
         # self.registration = None
 
-    def start(self, regs, dataloader, result_path=None):
+    def start_reg(self, regs, dataloader, result_path=None, show_flag=False):
         self.statistics = statistics_testing
         self.dataloader = dataloader
         if not isinstance(regs, list):
             regs = [regs]
         for i, reg in enumerate(regs):
-            voxel_size = VOXEL_SIZE_GLOBAL[i]
+            voxel_size_global = VOXEL_SIZE_GLOBAL[i]
+            voxel_size_local = VOXEL_SIZE_LOCAL[i]
             statistic = self.statistics[reg]
-            reg(self.dataloader, voxel_size, statistic, show_flag=False)
+            reg(self.dataloader, voxel_size_global, voxel_size_local, statistic, show_flag=show_flag)
         self.__report_log(result_path)
         if result_path:
             self.__report_out(self.statistics)
@@ -148,21 +149,26 @@ class tester:
 
 
 def main():
-    flag_test = False
+    flag_test = True
 
-    sample_path = './data/TUW_TUW_models/TUW_models/'
-    # input_path = './data/TUW_TUW_data/'
-    input_path = 'data/TUW_TUW_data_uniform_size/'
+    # sample_path = './data/TUW_TUW_models/TUW_models/'
+    # # input_path = './data/TUW_TUW_data/'
+    # input_path = 'data/TUW_TUW_data_uniform_size/'
+    # input_json_path = input_path + 'data.json'
+    #
+    # result_path = './result/TUW_TUW_test/'
+
+    sample_path = './data/human_models/head_models/'
+    input_path = './data/human_data/'
     input_json_path = input_path + 'data.json'
 
-    result_path = './result/TUW_TUW_test/'
-
+    result_path = './result/human_head_test/'
     dl = Reader()
     dl.read(input_json_path)
 
     reg_tester = tester()
     if flag_test:
-        reg_tester.start(regs=registrations, dataloader=dl, result_path=result_path)
+        reg_tester.start_reg(regs=registrations, dataloader=dl, result_path=result_path, show_flag=True)
     json_name = os.listdir(result_path)[0]
     result_json_path = result_path + json_name
     reg_tester.peek_failures(result_json_path, dl)

@@ -25,13 +25,14 @@ class Dataset:
         self.flag_show = False
 
         self.size = 220
-        self.voxel_sizes = (0.7,)
+        self.voxel_sizes = (0.2,)
+        # self.angles_cutoff_along = ()
         self.angles_cutoff_along = (0.0,)
-        self.plane_sizes = (0.8,)
-        self.Gaussian_sigma_factor = (0.2, 0.6, 1.2)
-        self.n_move = 2
+        self.plane_sizes = (0.6, 1.0)
+        self.Gaussian_sigma_factor = (0.02,)
+        self.n_move = 6
         self.translation_rg_factor = (-2.1, 2.1)
-        self.rotation_reg = (-0.1, 0.0)
+        self.rotation_reg = (-180.0, 180.0)
         self.num_random = (100,)
 
         # self.size = 220
@@ -59,14 +60,22 @@ class Dataset:
         #                   'burti', 'skull', 'yellow_toy_car', 'fruchtmolke', 'canon_camera_bag', 'dragon_recon',
         #                   'happy_recon', 'lucy']
 
-        self.instances = ['bunny', 'water_boiler', 'cisco_phone', 'strands_mounting_unit',
-                          'burti', 'skull', 'yellow_toy_car', 'fruchtmolke', 'canon_camera_bag', 'dragon_recon',
-                          'happy_recon']
+        # self.instances = ['bunny', 'water_boiler', 'cisco_phone', 'strands_mounting_unit',
+        #                   'burti', 'skull', 'yellow_toy_car', 'fruchtmolke', 'canon_camera_bag', 'dragon_recon',
+        #                   'happy_recon']
+
+        self.instances = ['model_women']
 
         # self.instances = ['bunny', 'water_boiler']
 
-        print('Total', len(self.instances)*len(self.voxel_sizes)*len(self.angles_cutoff_along)*len(self.plane_sizes) *
-              len(self.Gaussian_sigma_factor)*self.n_move, 'pc will be generated. \n',
+        print('Total',
+              (
+                  len(self.instances)*len(self.voxel_sizes) *
+                  len(self.angles_cutoff_along) if len(self.angles_cutoff_along) > 0 else 1 *
+                  len(self.plane_sizes) if len(self.plane_sizes) > 0 else 1 *
+                  len(self.Gaussian_sigma_factor) if len(self.Gaussian_sigma_factor) > 0 else 1 *
+                  self.n_move
+               ), 'pc will be generated. \n',
               len(self.instances), 'instances in account.\n',
               len(self.voxel_sizes), 'voxel sizes\n',
               len(self.angles_cutoff_along), 'angles\n',
@@ -134,7 +143,7 @@ class Writer(Dataset):
         # register artificial pc parameters
         print('Setting up artificial point cloud for')
         sources = self.__reg_down_sampling(sources)
-        sources = self.__reg_cutoff(sources)
+        # sources = self.__reg_cutoff(sources)
         # sources = self.__reg_add_outliers(sources)
         sources = self.__reg_add_plane(sources)
         sources = self.__reg_add_noise(sources)
@@ -227,7 +236,10 @@ class Writer(Dataset):
         bound_min, bound_max = pc.get_min_bound(), pc.get_max_bound()
         size_origin = np.linalg.norm(bound_max - bound_min) # here we use second order norm of range in every direction
         scale_factor = self.size / size_origin
+        if self.size == -1:
+            scale_factor = 1
         source['scale'] = scale_factor
+
         tf = source['pose'][0]
 
         source['pc_artificial'] = pc
@@ -264,6 +276,8 @@ class Writer(Dataset):
             o3.visualization.draw_geometries([pc], window_name='Initial Setup down to ' + str(voxel_size))
 
     def __reg_cutoff(self, sources, flag_show=True):
+        if len(self.angles_cutoff_along) == 0:
+            return sources
         sources_processed = []
         for source in sources:
             for angle_cutoff_along in self.angles_cutoff_along:
@@ -276,6 +290,8 @@ class Writer(Dataset):
         return sources_processed
 
     def __exe_cutoff(self, source, flag_show=True):
+        if not source['angle']:
+            return
         angle_cutoff_along = np.deg2rad(source['angle'])
         pc = source['pc_artificial']
         tp = np.asarray(pc.points)
@@ -301,7 +317,7 @@ class Writer(Dataset):
                 orientation = (self.rotation_reg[1] - self.rotation_reg[0]) * np.random.random((3, 1)) + \
                               self.rotation_reg[0]
                 tf = np.identity(4)
-                tf[:3, :3] = t3d.euler.euler2mat(*orientation)
+                tf[:3, :3] = t3d.euler.euler2mat(*np.deg2rad(orientation))
                 tf[:3, 3] = translation
                 # source_['pose'] = np.matmul(tf, source_['pose'])
                 source_['pose'].append(tf)
@@ -364,7 +380,9 @@ class Writer(Dataset):
         return sources_processed
 
     def __exe_add_plane(self, source, flag_show=True):
-        if source['instance'] not in self.instances_plane: return
+        # if source['instance'] not in self.instances_plane: return
+        plane_axis = (0, 1)
+        plane_normal_axis = 2
         dis_nearest_neighbor = source['voxel_size']
         plane_size = source['plane']
         pc = source['pc_artificial']
@@ -374,23 +392,27 @@ class Writer(Dataset):
 
         # add a plane underneath the model
         # dis_nearest_neighbor = dis_nearest_neighbor / plane_size
-        nx = int(plane_size * rg[0] / dis_nearest_neighbor)
-        ny = int(plane_size * rg[1] / dis_nearest_neighbor)
-        x = np.linspace(-plane_size * rg[0], rg[0] * plane_size, nx)
-        y = np.linspace(-plane_size * rg[1], rg[1] * plane_size, ny)
+        nx = int(plane_size * rg[plane_axis[0]] / dis_nearest_neighbor)
+        ny = int(plane_size * rg[plane_axis[1]] / dis_nearest_neighbor)
+        x = np.linspace(-plane_size * rg[plane_axis[0]], rg[plane_axis[0]] * plane_size, nx)
+        y = np.linspace(-plane_size * rg[plane_axis[1]], rg[plane_axis[1]] * plane_size, ny)
         x, y = np.meshgrid(x, y)
 
         # make a empty shadow
-        mask = np.logical_or(y < - rg[0] / 8, np.logical_or(x < - rg[0] / 4, x > rg[0] / 4))
+        mask = np.logical_or(y < - rg[plane_axis[0]] / 8, np.logical_or(x < - rg[plane_axis[0]] / 4, x > rg[plane_axis[0]] / 4))
         x, y = x[mask], y[mask]
-        z = np.zeros(y.shape) + tp.min(axis=0)[2]
+        z = np.zeros(y.shape) + tp.min(axis=0)[plane_normal_axis]
+        if 'model_women' in source['instance']:
+            z -= 50
         plane = np.stack([x, y, z])
         plane = np.reshape(plane, newshape=(3, -1)).T
 
         # make a hole at the intersection and behind
         model_center = np.mean(tp, axis=0)
         dis = np.linalg.norm(plane - model_center, axis=1)
-        mask = dis > rg[1] / 2 * 0.75
+        mask = dis > rg[plane_axis[1]] / 2 * 0.75
+        if 'model_women' in source['instance']:
+            mask = dis > rg[plane_axis[1]] / 2 * 1.12
         pc.points = o3.utility.Vector3dVector(np.r_[tp, plane[mask]])
 
         if flag_show:
@@ -460,6 +482,11 @@ def main():
     # output_path = 'data/TUW_TUW_data_uniform_size/'
     output_path = 'data/TUW_TUW_data_small/'
     output_json_path = output_path + 'data.json'
+
+    sample_path = './data/human_models/head_models/'
+    output_path = './data/human_data/'
+    output_json_path = output_path + 'data.json'
+
     ds = Writer()
     # ds.read_instance(data_path)
     if write:

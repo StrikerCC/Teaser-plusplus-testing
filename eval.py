@@ -56,6 +56,7 @@ def main():
         # draw_registration_result(source=A_pcd_raw, target=B_pcd_raw, transformation=source['pose'])
 
         # if VISUALIZE:
+        # if VISUALIZE:
         #     o3d.visualization.draw_geometries([A_pcd_raw,B_pcd_raw]) # plot A and B
 
         # voxel downsample both clouds
@@ -80,8 +81,7 @@ def main():
         B_feats = extract_fpfh(B_pcd,VOXEL_SIZE)
 
         # establish correspondences by nearest neighbour search in feature space
-        corrs_A, corrs_B = find_correspondences(
-            A_feats, B_feats, mutual_filter=True)
+        corrs_A, corrs_B = find_correspondences(A_feats, B_feats, mutual_filter=True)
         A_corr = A_xyz[:,corrs_A] # np array of size 3 by num_corrs
         B_corr = B_xyz[:,corrs_B] # np array of size 3 by num_corrs
 
@@ -99,7 +99,7 @@ def main():
             lines=o3d.utility.Vector2iVector(lines),
         )
         line_set.colors = o3d.utility.Vector3dVector(colors)
-        # o3d.visualization.draw_geometries([A_pcd,B_pcd,line_set])
+        o3d.visualization.draw_geometries([A_pcd,B_pcd,line_set])
 
         # robust global registration using TEASER++
         NOISE_BOUND = VOXEL_SIZE

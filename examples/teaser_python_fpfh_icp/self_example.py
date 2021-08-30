@@ -20,11 +20,14 @@ while True:
     ans[:3, :3] = t3d.euler.euler2mat(*np.deg2rad([90.0, 0.0, 0.0]))
     ans[:3, 3] = 200
 
-    A_pcd_raw = o3d.io.read_point_cloud('./data/bunny.pcd')
+    A_pcd_raw = o3d.io.read_point_cloud('./data/TUW_TUW_models/TUW_models/bunny/3D_model.pcd')
     A_pcd_raw.scale(scale=1000.0) #, center=A_pcd_raw.get_center())
-    A_pcd_raw.transform(ans)
+    # A_pcd_raw.transform(ans)
 
-    B_pcd_raw = o3d.io.read_point_cloud('./data/000006.pcd')
+    # B_pcd_raw = o3d.io.read_point_cloud('./data/000006.pcd')
+    B_pcd_raw = copy.deepcopy(A_pcd_raw)
+    B_pcd_raw.transform(ans)
+
 
     A_pcd_raw.paint_uniform_color([0.0, 0.0, 1.0]) # show A_pcd in blue
     B_pcd_raw.paint_uniform_color([1.0, 0.0, 0.0]) # show B_pcd in red
