@@ -20,3 +20,20 @@ def draw_registration_result(source, target=None, transformation=np.eye(4), wind
         o3.visualization.draw_geometries([source_temp, target_temp], window_name=window_name)
     else:
         o3.visualization.draw_geometries([source_temp], window_name=window_name)
+
+
+def draw_correspondence(source, target, correspondence, window_name='correspondence'):
+    # make line-set between correspondences
+    point_set = np.concatenate((np.asarray(source.points),
+                                np.asarray(target.points)))
+    line_set = correspondence
+    line_set[:, 1] += len(correspondence)
+    colors = [[0, 1, 0] for i in range(len(line_set))]  # lines are shown in green
+    line_set = o3.geometry.LineSet(
+        points=o3.utility.Vector3dVector(point_set),
+        lines=o3.utility.Vector2iVector(line_set),
+    )
+    line_set.colors = o3.utility.Vector3dVector(colors)
+    # draw
+    o3.visualization.draw_geometries([source, target, line_set], window_name=window_name)
+    return 1

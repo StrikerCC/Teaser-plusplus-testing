@@ -5,7 +5,6 @@
 @email: chengc0611@gmail.com
 @time: 8/19/21 5:22 PM
 """
-import copy
 import glob
 import json
 import os
@@ -13,7 +12,7 @@ import numpy as np
 
 from dataset import Reader
 from registration import registrations, VOXEL_SIZE_GLOBAL, VOXEL_SIZE_LOCAL
-from vis import draw_registration_result
+from vis import draw_registration_result, draw_correspondence
 
 statistics_testing = {global_registration: {'method': global_registration.__name__,
                                             '#case': 0,
@@ -28,7 +27,8 @@ statistics_testing = {global_registration: {'method': global_registration.__name
                                             'error_t_failure': [],
                                             'error_o_failure': [],
                                             'voxel_size_reg_failure': [],
-                                            'correspondence_failure': []
+                                            'correspondence_set_failure': [],
+                                            '#points': []
                                             } for global_registration in registrations}
 
 
@@ -91,7 +91,7 @@ class tester:
             json.dump(statistics_result, f)
         return 1
 
-    def peek_failures(self, result_json_path, dataloader):
+    def peek_failures(self, result_json_path, dataloader, flag_vis=False):
         # if not result_json_path or not dataloader:
         #     assert self.statistics and self.dataloader
         #     statistics_result = self.statistics
@@ -106,7 +106,7 @@ class tester:
             print('\n<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<')
             print(reg)
             if statistic['#failure'] == 0:
-                print('No successful test case')
+                print('No failure case')
                 statistic['#case'] = 1
             print('Translation rms', statistic['error_t'])
             print('Orientation rms', statistic['error_o'])
@@ -114,23 +114,34 @@ class tester:
             print('Failure percent', statistic['#failure'] / statistic['#case'])
             print('Showing failing case')
             for i_failure, index_fail in enumerate(statistic['index_failure']):
-                voxel_size = statistic['voxel_size_reg_failure'][i_failure]
-                tf_failure = np.asarray(statistic['tf_failure'][i_failure])
                 source = dataloader[index_fail]
+                voxel_size = statistic['voxel_size_reg_failure'][i_failure]
                 pc_src, pc_tar = source['pc_model'], source['pc_artificial']
                 pc_src, pc_tar = pc_src.voxel_down_sample(voxel_size=voxel_size), pc_tar.voxel_down_sample(voxel_size=voxel_size)
-                print('     instance', source['instance'], '\n      voxel_size', source['voxel_size'], '\n      angle',
-                      source['angle'], '\n      sigma', source['sigma'], '\n      plane', source['plane'])
+                num_points = statistic['#points'][i_failure]
+                correspondence_set = np.asarray(statistic['correspondence_set_failure'][i_failure])
+                tf_failure = np.asarray(statistic['tf_failure'][i_failure])
+                # pose_gt = np.asarray(statistic['pose_failure'])[i_failure]
+                print('     instance', source['instance'],
+                      '\n     # points', num_points,
+                      '\n     # correspondence', len(correspondence_set),
+                      '\n     voxel_size', source['voxel_size'],
+                      '\n     angle', source['angle'],
+                      '\n     sigma', source['sigma'],
+                      '\n     plane', source['plane'])
                 print(statistic['error_t_failure'][i_failure], statistic['error_o_failure'][i_failure])
+
                 # vis
-                draw_registration_result(source=pc_src, target=pc_tar, window_name='Initial pose of #' + str(i_failure) + '/'+str(len(statistic['index_failure']))+' using '+reg)
-                draw_registration_result(source=pc_src, target=pc_tar, transformation=tf_failure, window_name='Final reg of #' + str(i_failure) + '/'+str(len(statistic['index_failure']))+' using '+reg)
-                # skip the rest of failure case
-                if i_failure >= 10:
-                    break
+                if flag_vis:
+                    draw_registration_result(source=pc_src, target=pc_tar, window_name='Initial pose of #' + str(i_failure) + '/'+str(len(statistic['index_failure']))+' using '+reg)
+                    draw_correspondence(pc_src, pc_tar, correspondence_set)     # # make line-set between correspondences
+                    draw_registration_result(source=pc_src, target=pc_tar, transformation=tf_failure, window_name='Final reg of #' + str(i_failure) + '/'+str(len(statistic['index_failure']))+' using '+reg)
+                    # skip the rest of failure case
+                    if i_failure >= 3:
+                        break
 
             print('>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n')
-            print('Done')
+            print('Failure Enumeration Done')
 
         for i_reg, reg in enumerate(regs):
             statistic = statistics_result[reg]
@@ -144,7 +155,7 @@ class tester:
             print('Time average', (statistic['time_global'] + statistic['time_local']))
             print('Failure percent', statistic['#failure'] / statistic['#case'])
             print('>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n')
-            print('Done')
+            print('Summary Done')
         return 1
 
 
@@ -160,18 +171,21 @@ def main():
 
     sample_path = './data/human_models/head_models/'
     input_path = './data/human_data/'
-    input_json_path = input_path + 'data.json'
-
+    input_views_json_path = input_path + 'data.json'
+    input_model_path = './data/human_models/head_models/model_women/3D_model.pcd'
     result_path = './result/human_head_test/'
     dl = Reader()
-    dl.read(input_json_path)
+    dl.read(input_views_json_path)
 
     reg_tester = tester()
     if flag_test:
-        reg_tester.start_reg(regs=registrations, dataloader=dl, result_path=result_path, show_flag=True)
-    json_name = os.listdir(result_path)[0]
+        reg_tester.start_reg(regs=registrations, dataloader=dl, result_path=result_path, show_flag=False)
+
+    # show latest reg failure
+    json_names = sorted(os.listdir(result_path), key=lambda x: int(x[6:][:-5]))
+    json_name = json_names[-1]
     result_json_path = result_path + json_name
-    reg_tester.peek_failures(result_json_path, dl)
+    reg_tester.peek_failures(result_json_path, dl, flag_vis=True)
 
 
 if __name__ == '__main__':

@@ -7,6 +7,7 @@
 """
 
 import copy
+import glob
 import os
 # import glob
 import shutil
@@ -25,12 +26,12 @@ class Dataset:
         self.flag_show = False
 
         self.size = 220
-        self.voxel_sizes = (0.2,)
+        self.voxel_sizes = (0.1, 0.2)
         # self.angles_cutoff_along = ()
-        self.angles_cutoff_along = (0.0,)
-        self.plane_sizes = (0.6, 1.0)
+        self.angles_cutoff_along = (0.0, )
+        self.plane_sizes = (0.8, )
         self.Gaussian_sigma_factor = (0.02,)
-        self.n_move = 6
+        self.n_move = 12
         self.translation_rg_factor = (-2.1, 2.1)
         self.rotation_reg = (-180.0, 180.0)
         self.num_random = (100,)
@@ -64,7 +65,12 @@ class Dataset:
         #                   'burti', 'skull', 'yellow_toy_car', 'fruchtmolke', 'canon_camera_bag', 'dragon_recon',
         #                   'happy_recon']
 
-        self.instances = ['model_women']
+        self.instances = ['human_models/head_models/model_women/']
+        self.instances_models = ['3D_model.pcd']
+        self.instances_datas = ['views/']
+        self.instances_2_scale = {'bunny', 'water_boiler', 'cisco_phone', 'red_mug_white_spots',
+                                  'strands_mounting_unit', 'burti', 'skull', 'yellow_toy_car', 'fruchtmolke',
+                                  'canon_camera_bag', 'dragon_recon', 'happy_recon'}
 
         # self.instances = ['bunny', 'water_boiler']
 
@@ -89,8 +95,9 @@ class Dataset:
                                 'strands_mounting_unit', 'burti', 'skull', 'yellow_toy_car', 'fruchtmolke',
                                 'canon_camera_bag', 'dragon_recon', 'happy_recon'}
 
-        self.data_info = {'pc_model': None, 'pc_artificial': None, 'instance': None, 'scale': 1, 'unit': '',
-                          'voxel_size': None, 'angle': None, 'pose': [], 'sigma': None, 'outliers': None, 'plane': None}
+        self.data_info = {'pc_model': None, 'pc_from': None, 'pc_artificial': None, 'instance': None,
+                          'scale': 1, 'unit': '', 'voxel_size': None, 'angle': None, 'pose': [], 'tf': [],
+                          'sigma': None, 'outliers': None, 'plane': None}
 
         # def read_instance(self, dir_path):
     #     self.dir_path_read = dir_path
@@ -107,7 +114,7 @@ class ExeThread(threading.Thread):
         self.args = args
 
     def run(self):
-        print(self.thread_id, '::Creating artificial point cloud done')
+        print(self.thread_id, '::Creating artificial point cloud start')
         self.func(*self.args)
         print(self.thread_id, '::Creating artificial point cloud done')
 
@@ -115,6 +122,10 @@ class ExeThread(threading.Thread):
 class Writer(Dataset):
     def __init__(self):
         Dataset.__init__(self)
+        self.model_file_paths = []
+        self.datas_file_paths = []
+        self.poses_file_paths = []
+
         self.filename_len = 6
         self.meter_2_mm = True
 
@@ -126,14 +137,27 @@ class Writer(Dataset):
             shutil.rmtree(output_dir_path)
             os.makedirs(output_dir_path)
 
-        instances = self.instances
-        self.file_paths = [sample_dir_path + instance + '/3D_model.pcd' for instance in instances]
+        # self.file_paths = [sample_dir_path + instance + '/3D_model.pcd' for instance in instances]
+        self.model_file_paths, self.datas_file_paths, self.poses_file_paths = [], [], []
+        for instance, instance_model in zip(self.instances, self.instances_models):
+            self.model_file_paths.append(sample_dir_path + instance + instance_model)
+        for instance, instance_datas in zip(self.instances, self.instances_datas):
+            datas_file_paths_per_instance, poses_file_paths_per_instance = [], []
+            for instance_path in glob.glob(sample_dir_path + instance + instance_datas + '*.ply'):
+                datas_file_paths_per_instance.append(instance_path)
+            for instance_path in glob.glob(sample_dir_path + instance + instance_datas + '*.pcd'):
+                datas_file_paths_per_instance.append(instance_path)
+            # find txt per data file
+            for data_file_paths_per_instance in datas_file_paths_per_instance:
+                poses_file_paths_per_instance.append(data_file_paths_per_instance[:-3] + 'txt')
+            self.datas_file_paths.append(datas_file_paths_per_instance)
+            self.poses_file_paths.append(poses_file_paths_per_instance)
 
         """why brother registering parameters to build artificial data layer after layer, 
         why not build the point cloud in place. Think about how many point cloud will be here after 5 different 
         downsampling, 6 different cutoff, 4 different plane added, 8 different noise level, it will blow up memory"""
         # register sample pcs and artificial info
-        sources = self.__reg_pc(self.file_paths, self.instances)
+        sources = self.__reg_pc(self.model_file_paths, self.datas_file_paths, self.poses_file_paths, self.instances)
 
         # peek model data
         print('Get model point cloud for')
@@ -159,9 +183,9 @@ class Writer(Dataset):
         for id_thread in range(num_thread):
             index_start_sources = index_sources_thread_list[id_thread]
             index_end_sources = index_sources_thread_list[id_thread+1] if id_thread < num_thread-1 else len(sources)
-            exe_thread_list.append(ExeThread(thread_id=0, func=self.__exe_all, args=(sources, output_dir_path,
-                                                                                     index_start_sources,
-                                                                                     index_end_sources)))
+            exe_thread_list.append(ExeThread(thread_id=id_thread, func=self.__exe_all, args=(sources, output_dir_path,
+                                                                                             index_start_sources,
+                                                                                             index_end_sources)))
 
         # # start multithreading for pc maker and saver
         for id_thread in range(num_thread):
@@ -199,52 +223,69 @@ class Writer(Dataset):
             self.__exe_add_pose(source, flag_show=self.flag_show)
             self.__save_pc(output_dir_path, index=id_pc_saving, source=source)
 
-    def __reg_pc(self, file_paths, instances):
+    def __reg_pc(self, model_file_paths, datas_file_paths, poses_file_paths, instances):
         sources = []
-        for file_path, instance in zip(file_paths, instances):
-            tf = np.eye(4)
-            # transform the point cloud if necessary
-            if 'bunny' in file_path:
-                tf[:3, :3] = t3d.euler.euler2mat(*np.deg2rad([90.0, 0.0, 0.0]))
-                # tf[:3, 3] = 0
-            elif 'skull' in file_path:
-                tf[:3, :3] = t3d.euler.euler2mat(*np.deg2rad([0.0, 90.0, 0.0]))
-                tf[:3, 3] = 0
-            elif 'burti' in file_path:
-                tf[:3, :3] = t3d.euler.euler2mat(*np.deg2rad([90.0, 0.0, 0.0]))
-                tf[:3, 3] = 0
-            elif 'dragon_recon' in file_path:
-                tf[:3, :3] = t3d.euler.euler2mat(*np.deg2rad([90.0, 0.0, 0.0]))
-                tf[:3, 3] = 0
-            elif 'happy_recon' in file_path:
-                tf[:3, :3] = t3d.euler.euler2mat(*np.deg2rad([90.0, 0.0, 0.0]))
-                tf[:3, 3] = 0
+        for model_file_path, datas_file_path, pose_file_paths, instance in zip(model_file_paths, datas_file_paths, poses_file_paths, instances):
+            for data_file_path, pose_file_path in zip(datas_file_path, pose_file_paths):
+                tf_init = np.eye(4)
+                pose_model_in_target = np.loadtxt(pose_file_path)
+                assert pose_model_in_target.shape == (4, 4), 'Expect pose matrix to be 3x3, but get ' + str(pose_model_in_target.shape) + ' instead'
 
-            source = copy.deepcopy(self.data_info)
-            source['pc_model'] = file_path
-            source['instance'] = instance
-            source['unit'] = 'mm'
-            source['pose'].append(tf)
-            sources.append(source)
+                # transform the point cloud to upright to add plane
+                if 'bunny' in data_file_path:
+                    tf_init[:3, :3] = t3d.euler.euler2mat(*np.deg2rad([90.0, 0.0, 0.0]))
+                    # tf[:3, 3] = 0
+                elif 'skull' in data_file_path:
+                    tf_init[:3, :3] = t3d.euler.euler2mat(*np.deg2rad([0.0, 90.0, 0.0]))
+                    tf_init[:3, 3] = 0
+                elif 'burti' in data_file_path:
+                    tf_init[:3, :3] = t3d.euler.euler2mat(*np.deg2rad([90.0, 0.0, 0.0]))
+                    tf_init[:3, 3] = 0
+                elif 'dragon_recon' in data_file_path:
+                    tf_init[:3, :3] = t3d.euler.euler2mat(*np.deg2rad([90.0, 0.0, 0.0]))
+                    tf_init[:3, 3] = 0
+                elif 'happy_recon' in data_file_path:
+                    tf_init[:3, :3] = t3d.euler.euler2mat(*np.deg2rad([90.0, 0.0, 0.0]))
+                    tf_init[:3, 3] = 0
+                elif 'human' in data_file_path:
+                    tf_init[:3, :3] = t3d.euler.euler2mat(*np.deg2rad([180.0, 0.0, 0.0]))
+                    tf_init[:3, 3] = 0
+                source = copy.deepcopy(self.data_info)
+                source['pc_model'] = model_file_path
+                source['pc_from'] = data_file_path
+                source['instance'] = instance
+                source['unit'] = 'mm'
+                source['tf'].append(tf_init)
+                source['pose'] = pose_model_in_target
+
+                # # # vis to confirm
+                # pc_src = o3.io.read_point_cloud(source['pc_model'])
+                # pc_tar = o3.io.read_point_cloud(source['pc_from'])
+                # draw_registration_result(source=pc_src, target=pc_tar, transformation=source['pose'])
+
+                sources.append(source)
             # print(file_path, "\n    max bounds for geometry coordinates", pc.get_max_bound())
         return sources
 
     def __load_pc(self, source, flag_show=False):
-        file_path = source['pc_model']
+        tf_init = source['tf'][0]
+        file_path = source['pc_from']
         pc = o3.io.read_point_cloud(filename=file_path)
-        # normalization: scale up or down according to diagonal range to a size
-        bound_min, bound_max = pc.get_min_bound(), pc.get_max_bound()
-        size_origin = np.linalg.norm(bound_max - bound_min) # here we use second order norm of range in every direction
-        scale_factor = self.size / size_origin
-        if self.size == -1:
-            scale_factor = 1
-        source['scale'] = scale_factor
 
-        tf = source['pose'][0]
+        # normalization: scale up or down according to diagonal range to a size
+        if source['instance'] in self.instances_2_scale:
+            bound_min, bound_max = pc.get_min_bound(), pc.get_max_bound()
+            size_origin = np.linalg.norm(bound_max - bound_min) # here we use second order norm of range in every direction
+            scale_factor = self.size / size_origin
+            if self.size == -1:
+                scale_factor = 1
+            source['scale'] = scale_factor
+        else:
+            source['scale'] = 1
 
         source['pc_artificial'] = pc
-        pc.scale(scale=scale_factor, center=pc.get_center())
-        pc.transform(tf)
+        pc.scale(scale=source['scale'], center=pc.get_center())
+        pc.transform(tf_init)
 
         if flag_show:
             o3.visualization.draw_geometries([pc], window_name='Read ' + str(source['instance']))
@@ -316,11 +357,10 @@ class Writer(Dataset):
                                self.translation_rg_factor[0])
                 orientation = (self.rotation_reg[1] - self.rotation_reg[0]) * np.random.random((3, 1)) + \
                               self.rotation_reg[0]
-                tf = np.identity(4)
-                tf[:3, :3] = t3d.euler.euler2mat(*np.deg2rad(orientation))
-                tf[:3, 3] = translation
-                # source_['pose'] = np.matmul(tf, source_['pose'])
-                source_['pose'].append(tf)
+                tf_random = np.identity(4)
+                tf_random[:3, :3] = t3d.euler.euler2mat(*np.deg2rad(orientation))
+                tf_random[:3, 3] = translation
+                source_['tf'].append(tf_random)
                 sources_processed.append(source_)
         print('# of Pose', self.n_move)
         return sources_processed
@@ -329,19 +369,29 @@ class Writer(Dataset):
         pc = source['pc_artificial']
         pc_init = copy.deepcopy(pc) if flag_show else None
         # change the pose according to model size
-        tf = source['pose'][-1]
+        tf_random = source['tf'][-1]
         tp = np.asarray(pc.points)
-        rg = tp.max(axis=0) - tp.min(axis=0)  # range
-        tf[:3, 3] = rg * tf[:3, 3]
-        source['pose'][-1] = tf
-        del tf
-        pc.transform(source['pose'][-1])
+        rg = tp.max(axis=0) - tp.min(axis=0)        # range
+        tf_random[:3, 3] = rg * tf_random[:3, 3]    # rearrange translation
+        source['tf'][-1] = tf_random
+        del tf_random
+        pc.transform(source['tf'][-1])
 
-        # reformat poses to make final poseqq
+        # accumulate transformations to make final pose
+        assert len(source['tf']) == 2, 'Expect w transformation, but got ' + str(len(source['tf']))
         tf_final = np.eye(4)
-        for tf in source['pose']:
-            tf_final = np.matmul(tf, tf_final)
-        source['pose'] = tf_final.tolist()
+        for tf_ in source['tf']:
+            tf_final = np.matmul(tf_, tf_final)
+        source['pose'] = np.matmul(tf_final, source['pose'])
+
+        # # # vis to confirm
+        # pc_src = o3.io.read_point_cloud(source['pc_model'])
+        # pc_tar = source['pc_artificial']
+        # draw_registration_result(source=pc_src, target=pc_tar, transformation=source['pose'])
+
+        source['tf'] = [tf_.tolist() for tf_ in source['tf']]
+        source['pose'] = source['pose'].tolist()
+
         if flag_show:
             # pc_model = o3.io.read_point_cloud(source['pc_model'])
             o3.visualization.draw_geometries([pc_init, pc], window_name='Move at ' + str(tf_final))
@@ -403,7 +453,7 @@ class Writer(Dataset):
         x, y = x[mask], y[mask]
         z = np.zeros(y.shape) + tp.min(axis=0)[plane_normal_axis]
         if 'model_women' in source['instance']:
-            z -= 50
+            z -= 135
         plane = np.stack([x, y, z])
         plane = np.reshape(plane, newshape=(3, -1)).T
 
@@ -483,7 +533,7 @@ def main():
     output_path = 'data/TUW_TUW_data_small/'
     output_json_path = output_path + 'data.json'
 
-    sample_path = './data/human_models/head_models/'
+    sample_path = './data/'
     output_path = './data/human_data/'
     output_json_path = output_path + 'data.json'
 
@@ -495,7 +545,7 @@ def main():
     dl = Reader()
     dl.read(output_json_path)
 
-    i = -1
+    i = -10
     data = dl[i]
     pc_model = data['pc_model']
     pc_artificial = data['pc_artificial']

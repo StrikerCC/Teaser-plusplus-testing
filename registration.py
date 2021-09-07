@@ -12,8 +12,7 @@ import transforms3d as t3d
 import open3d as o3
 
 from helpers import find_correspondences, get_teaser_solver, Rt2T
-from dataset import Dataset
-from vis import draw_registration_result
+from vis import draw_registration_result, draw_correspondence
 
 
 TRANSLATION_FAILURE_TOLERANCE = 3.0
@@ -37,20 +36,37 @@ def format_statistic(statistic):
     assert statistic['#failure'] == len(statistic['index_failure']) == len(statistic['tf_failure']), str(statistic['#failure']) + ' ' + str(len(statistic['index_failure'])) + ' ' + str(len(statistic['tf_failure']))
 
 
-def record(reg, i, statistic, voxel_size_reg, pose_gt, tf_final, time_global, time_local):
-    orientation_gt, translation_gt = np.asarray(t3d.euler.mat2euler(pose_gt[:3, :3])), pose_gt[:3, 3]
-    orientation, translation = t3d.euler.mat2euler(tf_final[:3, :3]), tf_final[:3, 3]
-    error_t, error_o = np.rad2deg(np.abs(orientation_gt - orientation)), np.abs(translation_gt - translation)
-    error_t, error_o = np.linalg.norm(error_t), np.linalg.norm(error_o)
-    # # if differ from gt to much, count it as failure, not going to error statics
+def rigid_error(t1, t2):
+    orientation_1, translation_1 = t1[:3, :3], t1[:3, 3]
+    orientation_2, translation_2 = t2[:3, :3], t2[:3, 3]
+    orientation_diff = np.matmul(orientation_2, orientation_1.T)
+    error_o, error_t = np.rad2deg(np.asarray(t3d.euler.mat2euler(orientation_diff))), np.abs(
+        translation_2 - translation_1)
+    error_o, error_t = np.linalg.norm(error_o), np.linalg.norm(error_t)
+    return error_o, error_t
+
+
+def record(reg, i, statistic, voxel_size_reg, correspondence_set, tf_gt, tf_final, time_global, time_local, pc_src_global, pc_tar_global, pc_src_local, pc_tar_local):
+    failure = False
+    correspondence_set = np.asarray(correspondence_set)
+    error_o, error_t = rigid_error(tf_gt, tf_final)
+
     statistic['#case'] += 1
     statistic['time_global'] += time_global
     statistic['time_local'] += time_local
-    # statistic['detail']['tf'] = tf_final
+    # # if differ from gt to much, count it as failure, not going to error statics
     if error_o > ORIENTATION_FAILURE_TOLERANCE or error_t > TRANSLATION_FAILURE_TOLERANCE:
+        failure = True
         statistic['#failure'] += 1
         statistic['index_failure'].append(i)
-        statistic['pose_failure'].append(pose_gt.tolist())
+        statistic['#points'].append((
+            len(pc_src_global.points),
+            len(pc_tar_global.points),
+            len(pc_src_local.points),
+            len(pc_tar_local.points),
+        ))
+        statistic['correspondence_set_failure'].append(correspondence_set.tolist())
+        statistic['pose_failure'].append(tf_gt.tolist())
         statistic['tf_failure'].append(tf_final.tolist())
         statistic['error_t_failure'].append(error_t)
         statistic['error_o_failure'].append(error_o)
@@ -60,7 +76,7 @@ def record(reg, i, statistic, voxel_size_reg, pose_gt, tf_final, time_global, ti
         statistic['error_o'] += error_o
 
     # output
-    if i % 100 == 0:
+    if i % 50 == 0:
         print('iter', i, '\n   Method', reg,
               '\n   Time average',
               statistic['time_global'] / statistic['#case'] + statistic['time_local'] / statistic['#case'])
@@ -71,6 +87,7 @@ def record(reg, i, statistic, voxel_size_reg, pose_gt, tf_final, time_global, ti
                 '   Translation rms', statistic['error_t'] / (statistic['#case'] - statistic['#failure']),
                 '\n   Orientation rms', statistic['error_o'] / (statistic['#case'] - statistic['#failure']),
                 '\n   Failure percent', statistic['#failure'] / statistic['#case'])
+    return failure
 
 
 def output(statistic):
@@ -98,14 +115,10 @@ def ransac_icp(dataloader, voxel_size_global, voxel_size_local, statistic, show_
         # preprocessing include, down sampling, feature computation, tree building
         time_0 = time.time()
         pc_src_global, pc_tar_global = pc_src.voxel_down_sample(voxel_size_global), pc_tar.voxel_down_sample(voxel_size_global)
-        pc_src_local, pc_tar_local = pc_src.voxel_down_sample(voxel_size_local), pc_tar.voxel_down_sample(voxel_size_local)
 
         radius_normal = voxel_size_global * 2
         pc_src_global.estimate_normals(o3.geometry.KDTreeSearchParamHybrid(radius=radius_normal, max_nn=30))
         pc_tar_global.estimate_normals(o3.geometry.KDTreeSearchParamHybrid(radius=radius_normal, max_nn=30))
-        radius_normal = voxel_size_local * 2
-        pc_src_local.estimate_normals(o3.geometry.KDTreeSearchParamHybrid(radius=radius_normal, max_nn=30))
-        pc_tar_local.estimate_normals(o3.geometry.KDTreeSearchParamHybrid(radius=radius_normal, max_nn=30))
 
         # global registration
         radius_feature = voxel_size_global * 5
@@ -113,12 +126,12 @@ def ransac_icp(dataloader, voxel_size_global, voxel_size_local, statistic, show_
             radius=radius_feature, max_nn=100))
         pc_tar_fpfh = o3.pipelines.registration.compute_fpfh_feature(pc_tar_global, o3.geometry.KDTreeSearchParamHybrid(
             radius=radius_feature, max_nn=100))
-        # transformation_init = np.eye(4)
-        distance_threshold = voxel_size_global * 1.5
+        # distance_threshold = voxel_size_local * 1.5
+        distance_threshold = voxel_size_global
         result_global = o3.pipelines.registration.registration_ransac_based_on_feature_matching(
-            source=pc_src_global, target=pc_tar_global, source_feature=pc_src_fpfh, target_feature=pc_tar_fpfh, mutual_filter=True,
-            max_correspondence_distance=distance_threshold,
-            estimation_method=o3.pipelines.registration.TransformationEstimationPointToPoint(False), ransac_n=4,
+            source=pc_src_global, target=pc_tar_global, source_feature=pc_src_fpfh, target_feature=pc_tar_fpfh,
+            mutual_filter=True, max_correspondence_distance=distance_threshold,
+            estimation_method=o3.pipelines.registration.TransformationEstimationPointToPoint(False), ransac_n=3,
             checkers=[o3.pipelines.registration.CorrespondenceCheckerBasedOnEdgeLength(0.9),
                       o3.pipelines.registration.CorrespondenceCheckerBasedOnDistance(distance_threshold)],
             criteria=o3.pipelines.registration.RANSACConvergenceCriteria(10000000, 0.999)
@@ -127,10 +140,16 @@ def ransac_icp(dataloader, voxel_size_global, voxel_size_local, statistic, show_
 
         # local registration
         time_0 = time.time()
+        pc_src_local, pc_tar_local = pc_src.voxel_down_sample(voxel_size_local), pc_tar.voxel_down_sample(voxel_size_local)
+        radius_normal_local = voxel_size_local * 2
+        pc_src_local.estimate_normals(o3.geometry.KDTreeSearchParamHybrid(radius=radius_normal_local, max_nn=30))
+        pc_tar_local.estimate_normals(o3.geometry.KDTreeSearchParamHybrid(radius=radius_normal_local, max_nn=30))
+
+
         tf_global = result_global.transformation
-        distance_threshold = voxel_size_global
+        distance_threshold_local = voxel_size_local
         result_local = o3.pipelines.registration.registration_icp(
-            source=pc_src_local, target=pc_tar_local, max_correspondence_distance=distance_threshold,
+            source=pc_src_local, target=pc_tar_local, max_correspondence_distance=distance_threshold_local,
             init=tf_global,
             estimation_method=o3.pipelines.registration.TransformationEstimationPointToPlane(),
             # criteria=
@@ -139,23 +158,15 @@ def ransac_icp(dataloader, voxel_size_global, voxel_size_local, statistic, show_
 
         # record statics and output in screen
         tf_final = result_local.transformation
-        record('ransac_icp', i, statistic, voxel_size_global, pose_gt, tf_final, time_global, time_local)
+        record('ransac_icp', i, statistic, voxel_size_global, result_global.correspondence_set, pose_gt, tf_final, time_global, time_local, pc_src_global, pc_tar_global, pc_src_local, pc_tar_local)
 
         # vis
         if show_flag:
-            print('time_global, time_local', time_global, time_local)
-            print('icp tf', np.matmul(tf_final, np.linalg.inv(tf_global)))
-            draw_registration_result(source=pc_src_global, target=pc_tar_global, window_name='init')
-            draw_registration_result(source=pc_src_global, target=pc_tar_global, transformation=tf_global,
-                                     window_name='global reg')
-            draw_registration_result(source=pc_src_global, target=pc_tar_global, transformation=tf_final,
-                                     window_name='local reg')
-
-
+            show_per_reg_iter(method='ransac_icp', source=source, pc_src_global=pc_src_global,
+                              pc_tar_global=pc_tar_global, correspondence_set_global=result_global.correspondence_set,
+                              pc_src_local=pc_src_local, pc_tar_local=pc_tar_local,
+                              time_global=time_global, time_local=time_local, tf_global=tf_global, tf_final=tf_final)
     format_statistic(statistic)
-    output(statistic)
-
-    # return statistic
 
 
 def fgr_icp(dataloader, voxel_size_global, voxel_size_local, statistic, show_flag=False):
@@ -219,8 +230,6 @@ def fgr_icp(dataloader, voxel_size_global, voxel_size_local, statistic, show_fla
             draw_registration_result(source=pc_src_global, target=pc_src_global, transformation=tf_final)
 
     format_statistic(statistic)
-    """output"""
-    output(statistic)
 
 
 def fpfh_teaser_icp(dataloader, voxel_size_global, voxel_size_local, statistic, show_flag=False):
@@ -236,19 +245,16 @@ def fpfh_teaser_icp(dataloader, voxel_size_global, voxel_size_local, statistic, 
         # pc_src, pc_tar = o3.io.read_point_cloud(source['pc_model']), o3.io.read_point_cloud(source['pc_artificial'])
         pc_src, pc_tar = source['pc_model'], source['pc_artificial']
 
-        # preprocessing include, down sampling, feature computation, tree building
-        time_0 = time.time()
+        # global registration
+        time_0 = time.time()    # preprocessing include, down sampling, feature computation, tree building
+        # establish correspondences by nearest neighbour search in feature space
         pc_src_global, pc_tar_global = pc_src.voxel_down_sample(voxel_size_global), pc_tar.voxel_down_sample(voxel_size_global)
-        pc_src_local, pc_tar_local = pc_src.voxel_down_sample(voxel_size_local), pc_tar.voxel_down_sample(voxel_size_local)
         array_src_global, array_tar_global = np.asarray(pc_src_global.points).T, np.asarray(pc_tar_global.points).T
 
         # # extract FPFH features
-        radius_normal = voxel_size_global * 2
-        pc_src_global.estimate_normals(o3.geometry.KDTreeSearchParamHybrid(radius=radius_normal, max_nn=30))
-        pc_tar_global.estimate_normals(o3.geometry.KDTreeSearchParamHybrid(radius=radius_normal, max_nn=30))
-        radius_normal = voxel_size_local * 2
-        pc_src_local.estimate_normals(o3.geometry.KDTreeSearchParamHybrid(radius=radius_normal, max_nn=30))
-        pc_tar_local.estimate_normals(o3.geometry.KDTreeSearchParamHybrid(radius=radius_normal, max_nn=30))
+        radius_normal_global = voxel_size_global * 2
+        pc_src_global.estimate_normals(o3.geometry.KDTreeSearchParamHybrid(radius=radius_normal_global, max_nn=30))
+        pc_tar_global.estimate_normals(o3.geometry.KDTreeSearchParamHybrid(radius=radius_normal_global, max_nn=30))
 
         radius_feature = voxel_size_global * 5
         pc_src_fpfh = o3.pipelines.registration.compute_fpfh_feature(pc_src_global, o3.geometry.KDTreeSearchParamHybrid(
@@ -257,10 +263,9 @@ def fpfh_teaser_icp(dataloader, voxel_size_global, voxel_size_local, statistic, 
             radius=radius_feature, max_nn=100))
         feature_src_fpfh, feature_tar_fpfh = np.array(pc_src_fpfh.data).T, np.array(pc_tar_fpfh.data).T
 
-        # global registration
-        # establish correspondences by nearest neighbour search in feature space
         src_corrs_mask, tar_corrs_mask = find_correspondences(feature_src_fpfh, feature_tar_fpfh, mutual_filter=True)
         array_src_global, array_tar_global = array_src_global[:, src_corrs_mask], array_tar_global[:, tar_corrs_mask]  # np array of size 3 by num_corrs
+        correspondence_set = np.hstack([np.expand_dims(src_corrs_mask, axis=-1), np.expand_dims(tar_corrs_mask, axis=-1)])
 
         # line
         # robust global registration using TEASER++
@@ -276,10 +281,16 @@ def fpfh_teaser_icp(dataloader, voxel_size_global, voxel_size_local, statistic, 
 
         # local registration
         time_0 = time.time()
+        pc_src_local, pc_tar_local = pc_src.voxel_down_sample(voxel_size_local), pc_tar.voxel_down_sample(
+            voxel_size_local)
+        radius_normal_local = voxel_size_local * 2
+        pc_src_local.estimate_normals(o3.geometry.KDTreeSearchParamHybrid(radius=radius_normal_local, max_nn=30))
+        pc_tar_local.estimate_normals(o3.geometry.KDTreeSearchParamHybrid(radius=radius_normal_local, max_nn=30))
+
         tf_global = T_teaser
-        distance_threshold = voxel_size_global * 10
+        distance_threshold_local = voxel_size_local
         result_local = o3.pipelines.registration.registration_icp(
-            source=pc_src_local, target=pc_tar_local, max_correspondence_distance=distance_threshold,
+            source=pc_src_local, target=pc_tar_local, max_correspondence_distance=distance_threshold_local,
             init=tf_global,
             estimation_method=o3.pipelines.registration.TransformationEstimationPointToPlane(),
             # criteria=
@@ -288,41 +299,48 @@ def fpfh_teaser_icp(dataloader, voxel_size_global, voxel_size_local, statistic, 
 
         # record statics
         tf_final = result_local.transformation
-        record('fpfh_teaser_icp', i, statistic, voxel_size_global, pose_gt, tf_final, time_global, time_local)
+        record('ransac_icp', i, statistic, voxel_size_global, correspondence_set, pose_gt, tf_final, time_global,
+               time_local, pc_src_global, pc_tar_global, pc_src_local, pc_tar_local)
 
         # vis
         if show_flag:
-            num_corrs = array_src_global.shape[1]
-
-            # visualize the point clouds together with feature correspondences
-            points = np.concatenate((array_src_global.T, array_tar_global.T), axis=0)
-            lines = []
-            for i in range(num_corrs):
-                lines.append([i, i + num_corrs])
-            colors = [[0, 1, 0] for i in range(len(lines))]  # lines are shown in green
-            line_set = o3.geometry.LineSet(
-                points=o3.utility.Vector3dVector(points),
-                lines=o3.utility.Vector2iVector(lines),
-            )
-            line_set.colors = o3.utility.Vector3dVector(colors)
-
-            print('time_global, time_local, num_corrs', time_global, time_local, num_corrs)
-            print('icp tf', np.matmul(tf_final, np.linalg.inv(tf_global)))
-
-            draw_registration_result(source=pc_src_global, target=pc_tar_global, window_name='init')
-            o3.visualization.draw_geometries([pc_src_global, pc_tar_global, line_set])
-            draw_registration_result(source=pc_src_global, target=pc_tar_global, transformation=tf_global, window_name='global reg')
-            draw_registration_result(source=pc_src_global, target=pc_tar_global, transformation=tf_final, window_name='local reg')
+            show_per_reg_iter(method='fpfh_teaser_icp', source=source, pc_src_global=pc_src_global,
+                              pc_tar_global=pc_tar_global, correspondence_set_global=correspondence_set,
+                              pc_src_local=pc_src_local, pc_tar_local=pc_tar_local,
+                              time_global=time_global, time_local=time_local,
+                              tf_global=tf_global, tf_final=tf_final)
 
     format_statistic(statistic)
-    """output"""
-    output(statistic)
 
 
-# VOXEL_SIZE_GLOBAL = [5, 10, 7]
-# VOXEL_SIZE_GLOBAL = [5, 5, 5]
-VOXEL_SIZE_GLOBAL = [3]
-VOXEL_SIZE_LOCAL = [3]
+def show_per_reg_iter(method, source, pc_src_global, pc_tar_global, correspondence_set_global, pc_src_local, pc_tar_local, time_global, time_local, tf_global, tf_final):
+    # visualize the point clouds together with feature correspondences
+
+    print(method, 'instance: ', source['instance'], ', original voxel size: ', source['voxel_size'], ', noise sigma: ',
+          source['sigma'], ', plane factor: ', source['plane'])
+    print('#source_points_global:', len(np.asarray(pc_tar_global.points)), '#target_points_global', len(np.asarray(pc_src_global.points)), 'num_correspondence: ',
+          len(correspondence_set_global))
+    print('#source_points_local:', len(np.asarray(pc_tar_local.points)), '#target_points_local', len(np.asarray(pc_src_local.points)), 'num_correspondence: ',
+          len(correspondence_set_global))
+    print('time_global:', time_global, 'time_local', time_local)
+    print('global error', rigid_error(source['pose'], tf_global))
+    print('local error', rigid_error(source['pose'], tf_final))
+    print()
+
+    draw_registration_result(source=pc_src_global, target=pc_tar_global, window_name='init')
+    draw_correspondence(pc_src_global, pc_tar_global, correspondence_set_global, window_name='correspondence')
+    draw_registration_result(source=pc_src_global, target=pc_tar_global, transformation=tf_global,
+                             window_name='global reg')
+    draw_registration_result(source=pc_src_global, target=pc_tar_global, transformation=tf_final,
+                             window_name='local reg')
+    
+
+VOXEL_SIZE_GLOBAL = [5, 5]
+VOXEL_SIZE_LOCAL = [1, 1]
+
+# VOXEL_SIZE_GLOBAL = [10]
+# VOXEL_SIZE_LOCAL = [3]
+
 # registrations = [ransac_icp, fgr_icp, fpfh_teaser_icp]
-registrations = [fpfh_teaser_icp]
-
+registrations = [ransac_icp, fpfh_teaser_icp]
+# registrations = [fpfh_teaser_icp]

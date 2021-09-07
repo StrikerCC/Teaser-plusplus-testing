@@ -28,7 +28,7 @@ def combine_pcs(model_dir_path, model_file_name='3D_model.pcd'):
     # voxel_down_samples = (5, 2)
     voxel_down_samples = (5, 2, 1, 0.5, 0.2)
     # voxel_size_output = 0.273
-    voxel_size_output = 1
+    voxel_size_output = 0.02
 
     if not model_dir_path[-1] == '/':
         model_dir_path += '/'
@@ -40,38 +40,47 @@ def combine_pcs(model_dir_path, model_file_name='3D_model.pcd'):
     with open(view_dir_path + 'filter_parameters.json') as f:
         paras_filter = json.load(f)
     views_src, views_global_down_sample, views_local_down_sample = [], [], []
-    file_paths = sorted(glob.glob(view_dir_path + '*.ply'))
-    file_paths = [file_paths[i] for i in [2, 1, 0, 3, 4]]
+    view_file_paths = sorted(glob.glob(view_dir_path + '*.ply'))
+    view_file_paths = [view_file_paths[i] for i in [2, 1, 0, 3, 4]]
 
     # start timer
     time_0 = time.time()
-    for para_filter, view_file_path in zip(paras_filter, file_paths):
-        pc_src = o3.io.read_point_cloud(view_file_path)
-        print('Data scanned at ', view_file_path[-14:-10], view_file_path[-10:-6], 'range from', pc_src.get_max_bound(),
-              pc_src.get_min_bound())
-        pc_src = filter_pc(para_filter, pc_src)
-        views_src.append(pc_src)
+    for para_filter, view_file_path in zip(paras_filter, view_file_paths):
+        pc_view = o3.io.read_point_cloud(view_file_path)
+        print('Data scanned at ', view_file_path[-14:-10], view_file_path[-10:-6], 'range from', pc_view.get_max_bound(),
+              pc_view.get_min_bound())
+        pc_view = filter_pc(para_filter, pc_view)
+        views_src.append(pc_view)
         if flag_vis and len(views_src) > 1:
             o3.visualization.draw_geometries([views_src[-2]])
             # o3.visualization.draw_geometries(views_src[-2:])
     # align pc from different views together
     # # global reg: icp
     # # local reg: icp
-    # tf_list = reg_onebyone(pcs_src=views_src, voxels_down_sample=voxel_down_samples)
-    tf_list = reg_multiway(pcs=views_src, voxels_down_sample=voxel_down_samples)
+    tf_list = reg_onebyone(pcs_src=views_src, voxels_down_sample=voxel_down_samples)
+    # tf_list = reg_multiway(pcs=views_src, voxels_down_sample=voxel_down_samples)
     # merge those pcs from different views
     pc_combined = o3.geometry.PointCloud()
     for view_id in range(len(views_src)):
         views_src[view_id].transform(tf_list[view_id])
         pc_combined += views_src[view_id]
     pcd_combined_down = pc_combined.voxel_down_sample(voxel_size=voxel_size_output)
-    print('finish', len(file_paths), 'in', time.time() - time_0, 'seconds')
+    print('finish', len(view_file_paths), 'in', time.time() - time_0, 'seconds')
 
     # transform the point cloud if necessary
-    tf_flip = np.eye(4)
-    if 'head' in model_file_path:
-        tf_flip[:3, :3] = t3d.euler.euler2mat(*np.deg2rad([180.0, 0.0, 0.0]))
-    pcd_combined_down.transform(tf_flip)
+    # tf_flip = np.eye(4)
+    # if 'head' in model_file_path:
+    #     tf_flip[:3, :3] = t3d.euler.euler2mat(*np.deg2rad([180.0, 0.0, 0.0]))
+    # pcd_combined_down.transform(tf_flip)
+
+    # record combined pc pose in each view coordinate
+    for view_file_path, tf in zip(view_file_paths, tf_list):
+        pose_txt_file_path = view_file_path[:-3] + 'txt'
+        pose_model_in_view = np.linalg.inv(tf)
+        np.savetxt(pose_txt_file_path, pose_model_in_view)
+        # # vis to confirm
+        pc_view = o3.io.read_point_cloud(view_file_path)
+        draw_registration_result(source=pcd_combined_down, target=pc_view, transformation=pose_model_in_view)
 
     o3.io.write_point_cloud(model_file_path, pcd_combined_down)
     model_file_path = model_file_path[:-3] + 'ply'
@@ -204,6 +213,11 @@ def filter_pc(para, pc):
     # o3.visualization.draw_geometries([vol_pc])
     # o3.visualization.draw_geometries([pc])
     # o3.visualization.draw_geometries([comp])
+
+    '''remove outlier'''
+    comp = comp.voxel_down_sample(voxel_size=0.02)
+    comp, _ = comp.remove_statistical_outlier(nb_neighbors=5, std_ratio=1.0)
+    print('After outlier removal', comp)
     return comp
 
 

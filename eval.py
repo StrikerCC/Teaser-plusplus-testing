@@ -9,19 +9,13 @@
 
 import time
 
-import open3d as o3d
-
 import transforms3d as t3d
-import teaserpp_python
-import numpy as np 
 import copy
 from helpers import *
 from dataset import Reader
-from vis import draw_registration_result
 VOXEL_SIZE = 5
 VOXEL_SIZE_FINE = 3
 VISUALIZE = True
-
 
 
 def main():

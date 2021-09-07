@@ -14,7 +14,18 @@ def get_angular_error(R_exp, R_est):
     """
     Calculate angular error
     """
-    return abs(np.arccos(min(max(((np.matmul(R_exp.T, R_est)).trace() - 1) / 2, -1.0), 1.0)));
+    a_ = (np.matmul(R_exp.T, R_est))
+    a = a_.trace() - 1
+    return abs(np.arccos(
+        min(
+            max(
+                (
+                        a
+                ) / 2, -1.0)
+            , 1.0
+        )
+    )
+    )
 
 
 if __name__ == "__main__":
