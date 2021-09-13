@@ -523,6 +523,11 @@ class Reader(Dataset):
             source['pose'] = np.asarray(source['pose'])
         return source
 
+    def get(self, item):
+        if not self.sources: return None
+        source = copy.deepcopy(self.sources[item])
+        return source
+
 
 def main():
     write = True

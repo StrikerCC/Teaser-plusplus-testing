@@ -105,16 +105,20 @@ def ransac_icp(dataloader, voxel_size_global, voxel_size_local, statistic, show_
 
     # read source and target pc
     for i in range(len(dataloader)):
-        source = dataloader[i]
-        pose_gt = source['pose']
-        # orientation_gt, translation_gt = np.asarray(t3d.euler.mat2euler(pose_gt[:3, :3])), pose_gt[:3, 3]
 
-        # pc_src, pc_tar = o3.io.read_point_cloud(source['pc_model']), o3.io.read_point_cloud(source['pc_artificial'])
-        pc_src, pc_tar = source['pc_model'], source['pc_artificial']
+        time_0 = time.time()  # preprocessing include, down sampling, feature computation, tree building
+        source = dataloader.get(i)
+        pc_src, pc_tar = o3.io.read_point_cloud(source['pc_model']), o3.io.read_point_cloud(source['pc_artificial'])
+        pose_gt = np.asarray(source['pose'])
+        # source = dataloader[i]
+        # pc_src, pc_tar = source['pc_model'], source['pc_artificial']
+        # pose_gt = source['pose']
 
-        # preprocessing include, down sampling, feature computation, tree building
-        time_0 = time.time()
-        pc_src_global, pc_tar_global = pc_src.voxel_down_sample(voxel_size_global), pc_tar.voxel_down_sample(voxel_size_global)
+
+        # global registration
+        # establish correspondences by nearest neighbour search in feature space
+        pc_src_global, pc_tar_global = pc_src.voxel_down_sample(voxel_size_global), pc_tar.voxel_down_sample(
+            voxel_size_global)
 
         radius_normal = voxel_size_global * 2
         pc_src_global.estimate_normals(o3.geometry.KDTreeSearchParamHybrid(radius=radius_normal, max_nn=30))
@@ -128,6 +132,12 @@ def ransac_icp(dataloader, voxel_size_global, voxel_size_local, statistic, show_
             radius=radius_feature, max_nn=100))
         # distance_threshold = voxel_size_local * 1.5
         distance_threshold = voxel_size_global
+
+        time_read_pro = time.time()-time_0
+        print('     data process', time_read_pro)
+
+
+        time_0 = time.time()
         result_global = o3.pipelines.registration.registration_ransac_based_on_feature_matching(
             source=pc_src_global, target=pc_tar_global, source_feature=pc_src_fpfh, target_feature=pc_tar_fpfh,
             mutual_filter=True, max_correspondence_distance=distance_threshold,
@@ -145,7 +155,10 @@ def ransac_icp(dataloader, voxel_size_global, voxel_size_local, statistic, show_
         pc_src_local.estimate_normals(o3.geometry.KDTreeSearchParamHybrid(radius=radius_normal_local, max_nn=30))
         pc_tar_local.estimate_normals(o3.geometry.KDTreeSearchParamHybrid(radius=radius_normal_local, max_nn=30))
 
+        time_read_pro += time.time() - time_0
+        print('     data process', time.time() - time_0)
 
+        time_0 = time.time()
         tf_global = result_global.transformation
         distance_threshold_local = voxel_size_local
         result_local = o3.pipelines.registration.registration_icp(
@@ -155,6 +168,10 @@ def ransac_icp(dataloader, voxel_size_global, voxel_size_local, statistic, show_
             # criteria=
         )
         time_local = time.time() - time_0
+
+        print('data process', time_read_pro)
+        print('reg', time_global + time_local)
+        print()
 
         # record statics and output in screen
         tf_final = result_local.transformation
@@ -238,15 +255,19 @@ def fpfh_teaser_icp(dataloader, voxel_size_global, voxel_size_local, statistic, 
 
     # read source and target pc
     for i in range(len(dataloader)):
-        source = dataloader[i]
-        pose_gt = source['pose']
         # orientation_gt, translation_gt = np.asarray(t3d.euler.mat2euler(pose_gt[:3, :3])), pose_gt[:3, 3]
 
-        # pc_src, pc_tar = o3.io.read_point_cloud(source['pc_model']), o3.io.read_point_cloud(source['pc_artificial'])
-        pc_src, pc_tar = source['pc_model'], source['pc_artificial']
+        time_0 = time.time()    # preprocessing include, down sampling, feature computation, tree building
+
+        source = dataloader.get(i)
+        pc_src, pc_tar = o3.io.read_point_cloud(source['pc_model']), o3.io.read_point_cloud(source['pc_artificial'])
+        pose_gt = np.asarray(source['pose'])
+
+        # source = dataloader[i]
+        # pc_src, pc_tar = source['pc_model'], source['pc_artificial']
+        # pose_gt = source['pose']
 
         # global registration
-        time_0 = time.time()    # preprocessing include, down sampling, feature computation, tree building
         # establish correspondences by nearest neighbour search in feature space
         pc_src_global, pc_tar_global = pc_src.voxel_down_sample(voxel_size_global), pc_tar.voxel_down_sample(voxel_size_global)
         array_src_global, array_tar_global = np.asarray(pc_src_global.points).T, np.asarray(pc_tar_global.points).T
@@ -342,5 +363,5 @@ VOXEL_SIZE_LOCAL = [1, 1]
 # VOXEL_SIZE_LOCAL = [3]
 
 # registrations = [ransac_icp, fgr_icp, fpfh_teaser_icp]
-registrations = [ransac_icp, fpfh_teaser_icp]
+registrations = [ransac_icp]
 # registrations = [fpfh_teaser_icp]
