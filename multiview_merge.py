@@ -25,21 +25,31 @@ data/human_models/head_models/model_women/views/20210826133425-1.ply
 
 def combine_pcs(model_dir_path, model_file_name='3D_model.pcd'):
     flag_vis = False
+    # input_mm_output_m = False
+    input_mm_output_m = True
+
     # voxel_down_samples = (5, 2)
-    voxel_down_samples = (5, 2, 1, 0.5, 0.2)
+    if input_mm_output_m:
+        voxel_down_samples = (0.005, 0.002, 0.001, 0.0005, 0.0002)
+        # voxel_size_output = 0.00002
+        voxel_size_output = 0.02
+    else:
+        voxel_down_samples = (5, 2, 1, 0.5, 0.2)
+        voxel_size_output = 0.02
     # voxel_size_output = 0.273
-    voxel_size_output = 0.02
 
     if not model_dir_path[-1] == '/':
         model_dir_path += '/'
     view_dir_path = model_dir_path + 'views/'
     model_file_path = model_dir_path + model_file_name
+    output_dir_path = model_dir_path + 'views_meter/'
     assert os.path.isdir(view_dir_path), 'Dictionary for scan view not found'
+    if not os.path.isdir(output_dir_path): os.mkdir(output_dir_path)
 
     # load ply from different view
     with open(view_dir_path + 'filter_parameters.json') as f:
         paras_filter = json.load(f)
-    views_src, views_global_down_sample, views_local_down_sample = [], [], []
+    views_src, view_filtered, views_global_down_sample, views_local_down_sample = [], [], [], []
     view_file_paths = sorted(glob.glob(view_dir_path + '*.ply'))
     view_file_paths = [view_file_paths[i] for i in [2, 1, 0, 3, 4]]
 
@@ -47,23 +57,27 @@ def combine_pcs(model_dir_path, model_file_name='3D_model.pcd'):
     time_0 = time.time()
     for para_filter, view_file_path in zip(paras_filter, view_file_paths):
         pc_view = o3.io.read_point_cloud(view_file_path)
-        print('Data scanned at ', view_file_path[-14:-10], view_file_path[-10:-6], 'range from', pc_view.get_max_bound(),
+        # o3.visualization.draw_geometries([pc_view])
+
+        print('Data scanned at ', view_file_path[-14:-10], view_file_path[-10:-6], 'range from',
+              pc_view.get_max_bound(),
               pc_view.get_min_bound())
-        pc_view = filter_pc(para_filter, pc_view)
-        views_src.append(pc_view)
-        if flag_vis and len(views_src) > 1:
-            o3.visualization.draw_geometries([views_src[-2]])
-            # o3.visualization.draw_geometries(views_src[-2:])
+        pc_scaled, pc_filtered = filter_pc(para_filter, pc_view, input_mm_output_m)
+        views_src.append(pc_scaled)
+        view_filtered.append(pc_filtered)
+
+        if flag_vis and len(view_filtered) > 1:
+            o3.visualization.draw_geometries([view_filtered[-2]])
     # align pc from different views together
     # # global reg: icp
     # # local reg: icp
-    tf_list = reg_onebyone(pcs_src=views_src, voxels_down_sample=voxel_down_samples)
-    # tf_list = reg_multiway(pcs=views_src, voxels_down_sample=voxel_down_samples)
+    tf_list = reg_onebyone(pcs_src=view_filtered, voxels_down_sample=voxel_down_samples)
+
     # merge those pcs from different views
     pc_combined = o3.geometry.PointCloud()
-    for view_id in range(len(views_src)):
-        views_src[view_id].transform(tf_list[view_id])
-        pc_combined += views_src[view_id]
+    for view_id in range(len(view_filtered)):
+        view_filtered[view_id].transform(tf_list[view_id])
+        pc_combined += view_filtered[view_id]
     pcd_combined_down = pc_combined.voxel_down_sample(voxel_size=voxel_size_output)
     print('finish', len(view_file_paths), 'in', time.time() - time_0, 'seconds')
 
@@ -74,30 +88,35 @@ def combine_pcs(model_dir_path, model_file_name='3D_model.pcd'):
     # pcd_combined_down.transform(tf_flip)
 
     # record combined pc pose in each view coordinate
-    for view_file_path, tf in zip(view_file_paths, tf_list):
-        pose_txt_file_path = view_file_path[:-3] + 'txt'
+    for i, (pc_view, tf) in enumerate(zip(views_src, tf_list)):
+        pose_txt_file_path = output_dir_path + str(i) + '.txt'
+        view_file_path = output_dir_path + str(i) + '.pcd'
+        # # save pose
         pose_model_in_view = np.linalg.inv(tf)
         np.savetxt(pose_txt_file_path, pose_model_in_view)
+        # # save point cloud
+        o3.io.write_point_cloud(view_file_path, pc_view)
         # # vis to confirm
-        pc_view = o3.io.read_point_cloud(view_file_path)
         draw_registration_result(source=pcd_combined_down, target=pc_view, transformation=pose_model_in_view)
 
     o3.io.write_point_cloud(model_file_path, pcd_combined_down)
-    model_file_path = model_file_path[:-3] + 'ply'
-    o3.io.write_point_cloud(model_file_path, pcd_combined_down)
-    o3.visualization.draw_geometries([pcd_combined_down])
+    # model_file_path = model_file_path[:-3] + 'ply'
+    # o3.io.write_point_cloud(model_file_path, pcd_combined_down)
+    # o3.visualization.draw_geometries([pcd_combined_down])
 
 
 def reg_multiway(pcs, voxels_down_sample, flag_vis_reg=False):
     pose_graph = o3.pipelines.registration.PoseGraph()
     odometry = np.identity(4)
-    pose_graph.nodes.append(o3.pipelines.registration.PoseGraphNode(odometry))  # the really first node, world coordinate in this registration
+    pose_graph.nodes.append(o3.pipelines.registration.PoseGraphNode(
+        odometry))  # the really first node, world coordinate in this registration
     tf_list = []
     for tar_id in range(len(pcs)):
-        for src_id in range(tar_id+1, len(pcs)):
+        for src_id in range(tar_id + 1, len(pcs)):
             pc_src, pc_tar = pcs[src_id], pcs[tar_id]
-            tf, info, correspondence_distance_icp = registration_pairwise(pc_src, pc_tar, voxels_down_sample, flag_vis_reg)
-            if src_id == tar_id+1:
+            tf, info, correspondence_distance_icp = registration_pairwise(pc_src, pc_tar, voxels_down_sample,
+                                                                          flag_vis_reg)
+            if src_id == tar_id + 1:
                 odometry = np.dot(odometry, tf)
                 pose_graph.nodes.append(o3.pipelines.registration.PoseGraphNode(np.linalg.inv(odometry)))
                 pose_graph.edges.append(o3.pipelines.registration.PoseGraphEdge(src_id,
@@ -128,7 +147,7 @@ def reg_multiway(pcs, voxels_down_sample, flag_vis_reg=False):
 
 def reg_onebyone(pcs_src, voxels_down_sample, flag_vis_reg=False):
     tf_list = [np.eye(4)]
-    for tar_id in range(len(pcs_src)-1):
+    for tar_id in range(len(pcs_src) - 1):
         src_id = tar_id + 1
         pc_src, pc_tar = pcs_src[src_id], pcs_src[tar_id]
         odometry, *_ = registration_pairwise(pc_src, pc_tar, voxels_down_sample, flag_vis_reg)
@@ -169,7 +188,7 @@ def registration_pairwise(pc_src, pc_tar, voxels_down_sample, flag_vis_reg):
     return tf_icp, information_icp, correspondence_distance_icp
 
 
-def filter_pc(para, pc):
+def filter_pc(para, pc, input_mm_output_m):
     # voxel_size = para['voxel_size']
     # k_means = para['k_means']
     # pc_down = pc.voxe_down_sample(voxel_size)
@@ -182,8 +201,8 @@ def filter_pc(para, pc):
     # cutoff out range points
     x_max_y_max_z_max, x_min_y_min_z_min = para['upper_bound'], para['lower_bound']
     x_max_y_max_z_max, x_min_y_min_z_min = np.asarray(x_max_y_max_z_max), np.asarray(x_min_y_min_z_min)
-    # x_max_y_max_z_max, x_min_y_min_z_min = x_max_y_max_z_max, x_min_y_min_z_min
 
+    # x_max_y_max_z_max, x_min_y_min_z_min = x_max_y_max_z_max, x_min_y_min_z_min
 
     # x_min_y_max_z_max, x_max_y_min_z_min = np.copy(x_max_y_max_z_max), np.copy(x_min_y_min_z_min)
     # x_min_y_max_z_max[0], x_max_y_min_z_min[0] = x_min_y_min_z_min[0], x_max_y_max_z_max[0]
@@ -203,22 +222,30 @@ def filter_pc(para, pc):
     # vol = o3.visualization.SelectionPolygonVolume()
     # vol.bounding_polygon = o3.utility.Vector3dVector(bounding_polygon)
     # comp = vol.crop_point_cloud(pc)
-    comp = o3.geometry.PointCloud()
-    points = np.asarray(pc.points)
-    points = points[np.all(points < x_max_y_max_z_max, axis=-1)]
-    points = points[np.all(points > x_min_y_min_z_min, axis=-1)]
-    comp.points = o3.utility.Vector3dVector(points)
 
-    print('After crop', comp)
+    pc_scaled = o3.geometry.PointCloud()
+    pc_filter = o3.geometry.PointCloud()
+
+    points = np.asarray(pc.points)
+    points_scaled = points * 0.001 if input_mm_output_m else points
+
+    mask = np.all(points < x_max_y_max_z_max, axis=-1)
+    mask = np.logical_and(mask, np.all(points > x_min_y_min_z_min, axis=-1))
+    points_filtered = points_scaled[mask]
+
+    pc_scaled.points = o3.utility.Vector3dVector(points_scaled)
+    pc_filter.points = o3.utility.Vector3dVector(points_filtered)
+
+    print('After filtering ', pc_filter)
     # o3.visualization.draw_geometries([vol_pc])
     # o3.visualization.draw_geometries([pc])
     # o3.visualization.draw_geometries([comp])
 
     '''remove outlier'''
-    comp = comp.voxel_down_sample(voxel_size=0.02)
-    comp, _ = comp.remove_statistical_outlier(nb_neighbors=5, std_ratio=1.0)
-    print('After outlier removal', comp)
-    return comp
+    pc_filter = pc_filter.voxel_down_sample(voxel_size=para['voxel_size']*0.001) if input_mm_output_m else pc_filter.voxel_down_sample(voxel_size=para['voxel_size'])
+    pc_filter, _ = pc_filter.remove_statistical_outlier(nb_neighbors=5, std_ratio=1.0)
+    print('After outlier removal', pc_filter)
+    return pc_scaled, pc_filter
 
 
 def main():

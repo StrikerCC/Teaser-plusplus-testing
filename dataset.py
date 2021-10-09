@@ -26,13 +26,13 @@ class Dataset:
         self.flag_show = False
 
         self.size = 220
-        self.voxel_sizes = (0.08, 0.06)
+        self.voxel_sizes = (0.1, 0.08, 0.06)
         # self.angles_cutoff_along = ()
         self.angles_cutoff_along = (0.0, )
-        self.plane_sizes = (0.6, 0.8, 0.9)
+        self.plane_sizes = (0.6, 0.8, 1.0)
         self.Gaussian_sigma_factor = (0.02, 0.04)
-        self.n_move = 24
-        self.translation_rg_factor = (-2.1, 2.1)
+        self.n_move = 64
+        self.translation_rg_factor = (-3.1, 3.1)
         self.rotation_reg = (-180.0, 180.0)
         self.num_random = (100,)
 
@@ -128,7 +128,7 @@ class Writer(Dataset):
 
         self.filename_len = 6
         self.meter_2_mm = True
-        self.relative_path = False;
+        self.relative_path = False
 
     def write(self, sample_dir_path, output_dir_path, json_path, num_thread=4):
         # setup output path and file
@@ -540,13 +540,13 @@ def main():
     output_json_path = output_path + 'data.json'
 
     sample_path = './data/'
-    output_path = './data/human_data/'
+    output_path = './data/human_data_1152/'
     output_json_path = output_path + 'data.json'
 
     ds = Writer()
     # ds.read_instance(data_path)
     if write:
-        ds.write(sample_path, output_path, output_json_path)
+        ds.write(sample_path, output_path, output_json_path, num_thread=12)
 
     dl = Reader()
     dl.read(output_json_path)
