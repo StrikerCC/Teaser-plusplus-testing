@@ -14,7 +14,8 @@ def draw_registration_result(source, target=None, transformation=np.eye(4), wind
     source_temp = copy.deepcopy(source)
     target_temp = copy.deepcopy(target)
     source_temp.paint_uniform_color([1, 0.706, 0])
-    if target: target_temp.paint_uniform_color([0, 0.651, 0.929])
+    if target:
+        target_temp.paint_uniform_color([0, 0.651, 0.929])
     source_temp.transform(transformation)
     if target:
         o3.visualization.draw_geometries([source_temp, target_temp], window_name=window_name)
@@ -37,3 +38,7 @@ def draw_correspondence(source, target, correspondence, window_name='corresponde
     # draw
     o3.visualization.draw_geometries([source, target, line_set], window_name=window_name)
     return 1
+
+
+def bounding_box_3d(xyz_min, xyz_max):
+    pass

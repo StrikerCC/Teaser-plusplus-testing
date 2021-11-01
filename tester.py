@@ -169,7 +169,7 @@ def main():
     #
     # result_path = './result/TUW_TUW_test/'
 
-    sample_path = './data/human_models/head_models/'
+    # sample_path = './data/human_models/head_models/'
     input_path = './data/human_data/'
     input_views_json_path = input_path + 'data.json'
     input_model_path = './data/human_models/head_models/model_women/3D_model.pcd'

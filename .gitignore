@@ -35,3 +35,4 @@ python/*.egg-info/
 *.ply
 data/
 result/
+*.vtk
