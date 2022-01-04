@@ -1,7 +1,7 @@
 import open3d as o3d
 import numpy as np 
 from scipy.spatial import cKDTree
-import teaserpp_python
+# import teaserpp_python
 
 def pcd2xyz(pcd):
     return np.asarray(pcd.points).T

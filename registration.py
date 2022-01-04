@@ -11,7 +11,8 @@ import numpy as np
 import transforms3d as t3d
 import open3d as o3
 
-from helpers import find_correspondences, get_teaser_solver, Rt2T
+# from helpers import find_correspondences, get_teaser_solver, Rt2T
+from helpers import find_correspondences, Rt2T
 from vis import draw_registration_result, draw_correspondence
 
 

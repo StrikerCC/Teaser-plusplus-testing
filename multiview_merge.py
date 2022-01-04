@@ -360,7 +360,7 @@ def main():
     # model_dir_path = 'data/human_models/head_models/model_women/'
 
     '''output file name and voxel size'''
-    model_file_name = '/3D_model.pcd'
+    model_file_name = '/3D_model_camera.pcd'
     pc_merged_file_path = model_dir_path + model_file_name
 
     '''reg voxel size'''
